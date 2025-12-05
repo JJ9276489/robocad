@@ -1,7 +1,6 @@
 from dataclasses import dataclass, field
-import cadquery as cq
-
-from robocad.core.part import Part
+from build123d import *
+from robocad.core.part import Component
 
 
 @dataclass
@@ -9,15 +8,10 @@ class ServoSpec:
     """
     Physical dimensions of a servo body.
     All units in millimeters.
-
-    Coordinates:
-      - X axis: front ↔ back (length direction)
-      - Y axis: left ↔ right (width direction)
-      - Z axis: bottom ↔ top (height)
     """
-    body_width: float        # side-to-side (Y)
-    body_length: float       # front-to-back (X)
-    body_height: float       # bottom-to-top (Z)
+    body_width: float        # Y
+    body_length: float       # X
+    body_height: float       # Z
 
     flange_thickness: float  # thickness of the mounting ears
     flange_overhang: float   # how far the flanges extend past the body (in +X / -X)
@@ -39,17 +33,16 @@ SG90_SPEC = ServoSpec(
     screw_diameter=2.0,
 )
 
+# ---- PARTS ----
 
 @dataclass
-class ServoMountPlate(Part):
+class ServoMountPlate(Component):
     """
     A simple rectangular plate with:
       - a rectangular cutout where the servo body drops through
       - two inline mounting screw holes (front/back) along the centerline
 
-    The servo:
-      - body passes through the plate
-      - flanges rest on top of the plate
+    Draw the profile (rectangle minus body minus screw holes) and extrude once.
     """
 
     # Use default factory so dataclasses don't complain about a mutable default
@@ -58,55 +51,39 @@ class ServoMountPlate(Part):
 
     thickness: float = 3.0      # plate thickness
     clearance: float = 0.3      # extra slack around the body so it actually fits
-    hole_diameter: float = 2.2  # larger than screw for clearance
-    flange_extra: float = 10.0  # extra length beyond the body for screw land
-    body_extra: float = 6.0     # extra area beyond body
+    margin: float = 6.0     # extra area beyond body
 
-    def build(self) -> cq.Workplane:
+    def build(self):
         s = self.spec  # alias
 
         # 1) Compute the plate size based on servo dimensions.
-        plate_width  = s.body_width + self.body_extra
-        plate_length = s.body_length + self.flange_extra
+        plate_width  = s.body_width + self.margin
+        plate_length = s.body_length + self.margin
 
-        # 2) Create the solid plate: a simple rectangular prism.
-        plate = (
-            cq.Workplane("XY")
-            .rect(plate_length, plate_width)  # centered at (0,0)
-            .extrude(self.thickness)         # from z=0 up to z=thickness
-        )
+        # 2) Sketch the mounting plate
+        with BuildPart() as part:
+            with BuildSketch():
+                # Step A: The Plate (Base)
+                Rectangle(plate_length, plate_width)
+                fillet(vertices(), radius=2)
 
-        # 3) Cut a through-hole where the servo body will sit.
-        # We start from the TOP face and cut DOWN through the plate.
-        body_cut_length = s.body_length + self.clearance
-        body_cut_width  = s.body_width  + self.clearance
+                # Step B: Negative Shape (The cutout)
+                # Stay in the same sketch, but subtract
+                Rectangle(plate_length - self.margin,
+                          plate_width - self.margin,
+                          mode=Mode.SUBTRACT,)
+                
+                # Step C: Negative Shape (The screw holes)
+                with Locations((s.screw_spacing_x / 2, 0), (-s.screw_spacing_x / 2, 0)):
+                    Circle(s.screw_diameter / 2, mode=Mode.SUBTRACT)
+            
+            # 3) Extrude once
+            extrude(amount=self.thickness)
 
-        plate = (
-            plate
-            .faces(">Z").workplane()  # top face
-            .rect(body_cut_length, body_cut_width)
-            .cutBlind(-self.thickness)  # cut downwards through plate
-        )
-
-        # 4) Add screw holes inline along X, centered in Y.
-        # For SG90: two screws, one front, one back, both on Y=0.
-        half_spacing = s.screw_spacing_x / 2.0
-
-        plate = (
-            plate
-            .faces(">Z").workplane()  # still on top face
-            .pushPoints([
-                ( half_spacing,  0.0),  # front screw
-                (-half_spacing,  0.0),  # back screw
-            ])
-            .hole(self.hole_diameter)
-        )
-
-        return plate
-
+            return part.part
 
 @dataclass
-class ServoFrustumMount(Part):
+class ServoFrustumMount(Component):
     '''
     Curved/tapered servo mount:
         - outer frustum (truncated pyramid with filleted edges)
@@ -123,103 +100,103 @@ class ServoFrustumMount(Part):
     spec: ServoSpec = field(default_factory=lambda: SG90_SPEC)
 
     # Overall mount geometry
-    base_length: float = 42.0   # bottom footprint in X (mm)
-    base_width: float = 32.0    # bottom footprint in Y (mm)
-    height: float = 28.8        # total mount height (mm)
+    base_length: float = 42.0   # X
+    base_width: float = 32.0    # Y
+    height: float = 28.8        # Z
 
     wall_thickness: float = 2.5
+    deck_thickness: float = 3.0     # thickness of top part holding the servo
     bottom_thickness: float = 3.0
-    pocket_clearance: float = 0.4
-    fillet_radius: float = 3.0
+    corner_radius: float = 3.0
 
-    # Bottom mounting holes (to bolt this to something)
+    # Base mounting
+    base_mount_hole_inset: float = 4.0
     mount_hole_diameter: float = 3.0
-    mount_hole_offset_x: float = 14.0
-    mount_hole_offset_y: float = 10.0
 
     # Wire slot on one side
     wire_slot_width: float = 8.0
     wire_slot_height: float = 8.0
 
-    def build(self) -> cq.Workplane:
+    def build(self) -> Part:
         s = self.spec
 
         # 1) Compute top outer size
         # We want enough room for:
         # servo body + clearance + walls
 
-        pocket_length = s.body_length + 2 * self.pocket_clearance
-        pocket_width  = s.body_width  + 2 * self.pocket_clearance
-
-        top_outer_length = pocket_length + 2 * self.wall_thickness
-        top_outer_width  = pocket_width  + 2 * self.wall_thickness 
+        top_len = s.body_length + (2 * self.wall_thickness) + 2.0
+        top_wid  = s.body_width  + (2 * self.wall_thickness) + 2.0
 
         # Check if base is at least as big as the top NOTE we should make this scale parametrically too
-        assert self.base_length >= top_outer_length
-        assert self.base_width  >= top_outer_width
+        assert self.base_length >= top_len
+        assert self.base_width  >= top_wid
 
-        # 2) Outer frustum solid (loft between bottom and top rectangles)
-        outer = (
-            cq.Workplane("XY")
-            .rect(self.base_length, self.base_width)    # bottom
-            .workplane(offset=self.height)              # move up in height
-            .rect(top_outer_length, top_outer_width)    # top
-            .loft(combine=True)
-        )
+        # 2) Define the profiles (sketches)
+        # fillet before lofting for cleaner geometry
+        with BuildSketch() as top_profile:
+            Rectangle(top_len, top_wid)
+            fillet(vertices(), radius=self.corner_radius)
+        
+        with BuildSketch() as bottom_profile:
+            Rectangle(self.base_length, self.base_width)
+            fillet(vertices(), radius=self.corner_radius)
+        
+        # 3) Build the main solid
+        with BuildPart() as main_body:
+            # create frustum
+            loft(sections=[bottom_profile.sketch, top_profile.sketch.moved(Location((0,0,self.height)))])
+            
+            # 4) Hollow it out
+            # We will cut from bottom up stopping short of the top to leave a 'deck'
+            interior_height = self.height - self.deck_thickness
 
-        # 3) Fillet vertical edges for curved look (NOTE |Z only works for edges parallel to Z axis)
-        all_edges = outer.edges().vals()
+            # a) Create a smaller version of the bottom profile for the hollow inside
+            with BuildSketch(Plane.XY) as core_bottom:
+                Rectangle(self.base_length - 2 * self.wall_thickness, 
+                          self.base_width - 2 * self.wall_thickness)
+                fillet(vertices(), radius=self.corner_radius - self.wall_thickness)
+            
+            # b) Create a smaller version of the top profile
+            with BuildSketch(Plane.XY.offset(interior_height)) as core_top:
+                Rectangle(top_len - 2 * self.wall_thickness,
+                          top_wid - 2 * self.wall_thickness)
+                fillet(vertices(), radius=self.corner_radius - self.wall_thickness)
+            
+            # c) Subtract the core
+            loft(sections=[core_bottom.sketch, core_top.sketch], mode=Mode.SUBTRACT)
 
-        edges_to_fillet = [
-            e for e in all_edges
-            if (e.BoundingBox().zmax - e.BoundingBox().zmin) > 1.0
-        ]
+            # 5) Servo Pocket
+            with BuildSketch(Plane.XY.offset(self.height)):
+                Rectangle(s.body_length + 0.4, s.body_width + 0.4)
+            extrude(amount=-self.deck_thickness, mode=Mode.SUBTRACT)
 
-        outer = outer.newObject(edges_to_fillet).fillet(self.fillet_radius)
+            # 6) Servo mounting screw holes
+            with BuildSketch(Plane.XY.offset(self.height)):
+                with Locations((s.screw_spacing_x / 2, 0), (-s.screw_spacing_x / 2, 0)):
+                    Circle(s.screw_diameter / 2)
+            extrude(amount=-self.deck_thickness, mode=Mode.SUBTRACT)
 
-        # 4) Make it hollow NOTE by shelling with top face selected, there is nothing left to cut the servo pocket into
-        shell = outer.faces(">Z").shell(-self.wall_thickness)
+            # 7) Wire slot cut
+            # Placed on the right side (I want to cut a slot offset from the bottom by about wall thickness on one side)
+            with BuildSketch(Plane.YZ):
+                with Locations((0, (self.wire_slot_height / 2) + self.wall_thickness)):
+                    Rectangle(self.wire_slot_width, self.wire_slot_height)
+            extrude(amount=self.base_length, mode=Mode.SUBTRACT)
+            
+            # 8) Base mounting holes
+            # better to parametrically inset these
+            with BuildSketch(Plane.XY):
+                mounting_hole_locations = [
+                    ( ((self.base_length / 2) - self.base_mount_hole_inset), -((self.base_width / 2) - self.base_mount_hole_inset)),
+                    ( ((self.base_length / 2) - self.base_mount_hole_inset),  ((self.base_width / 2) - self.base_mount_hole_inset)),
+                    (-((self.base_length / 2) - self.base_mount_hole_inset), -((self.base_width / 2) - self.base_mount_hole_inset)),
+                    (-((self.base_length / 2) - self.base_mount_hole_inset),  ((self.base_width / 2) - self.base_mount_hole_inset))
+                ]
+                with Locations(mounting_hole_locations):
+                    Circle(self.mount_hole_diameter / 2)
+            extrude(amount=self.height, mode=Mode.SUBTRACT)
+        
+        return main_body.part
 
-        # 5) Cut servo pocket from the top NOTE this step seems redundant to me. top of frustum is hollowed out from shell already
-        # nvm, I think it creates a vertical part for the servo to slide into
-        pocket_depth = self.height - self.bottom_thickness
-        shell = (
-            shell
-            .faces(">Z").workplane()            # top opening
-            .rect(pocket_length, pocket_width)
-            .cutBlind(-pocket_depth)            # cut downward in Z
-        )
-
-        # 6) Wire slot on +X side NOTE this corresponds better with wire placement on servo.
-        # Seems more robust to use a boolean cut
-        cut_z_bottom = self.bottom_thickness
-        cut_height   = self.wire_slot_height
-        cut_width    = self.wire_slot_width
-
-        center_z = cut_z_bottom + (cut_height / 2.0)
-
-        cutter = (
-            cq.Workplane("XZ")
-            .rect(top_outer_length / 2, cut_height)
-            .extrude(cut_width)
-            .translate((self.base_length / 2, cut_width / 2, center_z))
-        )
-
-        shell = shell.cut(cutter)
-
-        # 7) Bottom mounting holes (4 corners, symmetric)
-        # NOTE the mounting holes are going to be inside the frustum? kind of inconvenient.
-        shell = (
-            shell.faces("<Z").workplane()
-            .pushPoints([
-                ( self.mount_hole_offset_x,  self.mount_hole_offset_y),
-                ( self.mount_hole_offset_x, -self.mount_hole_offset_y),
-                (-self.mount_hole_offset_x,  self.mount_hole_offset_y),
-                (-self.mount_hole_offset_x, -self.mount_hole_offset_y),
-            ])
-            .hole(self.mount_hole_diameter)
-        )
-
-        return shell
-
+            
 

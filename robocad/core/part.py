@@ -1,19 +1,27 @@
 from abc import ABC, abstractmethod
-import cadquery as cq
+from build123d import Part, export_stl, export_step
 
-class Part(ABC):
+class Component(ABC):
     '''
     Base class for all parametric parts.
-
-    Subclasses must implement build() to return a CadQuery solid.
     '''
 
     @abstractmethod
-    def build(self) -> cq.Workplane:
-        '''Build and returnt he CadQuery solid representing this part.'''
+    def build(self) -> Part:
+        '''
+        Build and return the Build123d part representing this component.
+        
+        Returns:
+            Part: A build123d Part object (Topological solid)
+        '''
         raise NotImplementedError
     
     def export_stl(self, path: str) -> None:
         '''Export the built solid as an STL file.'''
         solid = self.build()
-        cq.exporters.export(solid, path)
+        export_stl(solid, path)
+    
+    def export_step(self, path: str) -> None:
+        '''Export the built solid as a STEP file.'''
+        solid = self.build()
+        export_step(solid, path)
