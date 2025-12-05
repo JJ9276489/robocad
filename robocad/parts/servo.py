@@ -51,14 +51,15 @@ class ServoMountPlate(Component):
 
     thickness: float = 3.0      # plate thickness
     clearance: float = 0.3      # extra slack around the body so it actually fits
-    margin: float = 6.0     # extra area beyond body
+    margin_y: float = 3.0       # extra area beyond body in Y (width)
+    margin_x: float = 5.0       # extra area beyond body in X (length)
 
     def build(self):
         s = self.spec  # alias
 
         # 1) Compute the plate size based on servo dimensions.
-        plate_width  = s.body_width + self.margin
-        plate_length = s.body_length + self.margin
+        plate_width  = s.body_width + self.margin_y * 2
+        plate_length = s.body_length + self.margin_x * 2
 
         # 2) Sketch the mounting plate
         with BuildPart() as part:
@@ -69,8 +70,8 @@ class ServoMountPlate(Component):
 
                 # Step B: Negative Shape (The cutout)
                 # Stay in the same sketch, but subtract
-                Rectangle(plate_length - self.margin,
-                          plate_width - self.margin,
+                Rectangle(s.body_length + 2 * self.clearance,
+                          s.body_width + 2 * self.clearance,
                           mode=Mode.SUBTRACT,)
                 
                 # Step C: Negative Shape (The screw holes)
@@ -99,6 +100,9 @@ class ServoFrustumMount(Component):
     '''
     spec: ServoSpec = field(default_factory=lambda: SG90_SPEC)
 
+    # Debugging
+    debug_view: bool = False
+
     # Overall mount geometry
     base_length: float = 42.0   # X
     base_width: float = 32.0    # Y
@@ -124,7 +128,7 @@ class ServoFrustumMount(Component):
         # We want enough room for:
         # servo body + clearance + walls
 
-        top_len = s.body_length + (2 * self.wall_thickness) + 2.0
+        top_len = s.body_length + (2 * self.wall_thickness) + 4.0
         top_wid  = s.body_width  + (2 * self.wall_thickness) + 2.0
 
         # Check if base is at least as big as the top NOTE we should make this scale parametrically too
@@ -147,23 +151,28 @@ class ServoFrustumMount(Component):
             loft(sections=[bottom_profile.sketch, top_profile.sketch.moved(Location((0,0,self.height)))])
             
             # 4) Hollow it out
-            # We will cut from bottom up stopping short of the top to leave a 'deck'
-            interior_height = self.height - self.deck_thickness
+            # We will cut from bottom up stopping short of the top and bottom to leave a hollow inside
+            z_top_inner = self.height - self.deck_thickness
 
-            # a) Create a smaller version of the bottom profile for the hollow inside
-            with BuildSketch(Plane.XY) as core_bottom:
-                Rectangle(self.base_length - 2 * self.wall_thickness, 
-                          self.base_width - 2 * self.wall_thickness)
-                fillet(vertices(), radius=self.corner_radius - self.wall_thickness)
+            inner_len0, inner_wid0 = self._inner_dims_at_z(self.bottom_thickness, top_len, top_wid)
+            inner_len1, inner_wid1 = self._inner_dims_at_z(z_top_inner, top_len, top_wid)
+
+            inner_corner_radius = max(self.corner_radius - self.wall_thickness, 0)
+
+            with BuildSketch(Plane.XY.offset(self.bottom_thickness), mode=Mode.PRIVATE) as core_bottom:
+                Rectangle(inner_len0, inner_wid0)
+                fillet(vertices(), radius=inner_corner_radius)
             
-            # b) Create a smaller version of the top profile
-            with BuildSketch(Plane.XY.offset(interior_height)) as core_top:
-                Rectangle(top_len - 2 * self.wall_thickness,
-                          top_wid - 2 * self.wall_thickness)
-                fillet(vertices(), radius=self.corner_radius - self.wall_thickness)
-            
-            # c) Subtract the core
-            loft(sections=[core_bottom.sketch, core_top.sketch], mode=Mode.SUBTRACT)
+            with BuildSketch(Plane.XY.offset(z_top_inner), mode=Mode.PRIVATE) as core_top:
+                Rectangle(inner_len1, inner_wid1)
+                fillet(vertices(), radius=inner_corner_radius)
+
+            core_cutout = loft(sections=[core_bottom.sketch, core_top.sketch], mode=Mode.PRIVATE)
+
+            if self.debug_view:
+                return core_cutout
+
+            add(core_cutout, mode=Mode.SUBTRACT)
 
             # 5) Servo Pocket
             with BuildSketch(Plane.XY.offset(self.height)):
@@ -177,9 +186,10 @@ class ServoFrustumMount(Component):
             extrude(amount=-self.deck_thickness, mode=Mode.SUBTRACT)
 
             # 7) Wire slot cut
-            # Placed on the right side (I want to cut a slot offset from the bottom by about wall thickness on one side)
+            # Placed on the front face (I want to cut a slot offset from the bottom by bottom thickness on one side)
+            slot_clearance = 2.0 # if this subtractive prism touches the bottom floor it causes rendering glitches
             with BuildSketch(Plane.YZ):
-                with Locations((0, (self.wire_slot_height / 2) + self.wall_thickness)):
+                with Locations((0, (self.wire_slot_height / 2) + self.bottom_thickness + slot_clearance)):
                     Rectangle(self.wire_slot_width, self.wire_slot_height)
             extrude(amount=self.base_length, mode=Mode.SUBTRACT)
             
@@ -195,8 +205,26 @@ class ServoFrustumMount(Component):
                 with Locations(mounting_hole_locations):
                     Circle(self.mount_hole_diameter / 2)
             extrude(amount=self.height, mode=Mode.SUBTRACT)
-        
         return main_body.part
+    
+    def _lerp(self, bottom_value: float, top_value: float, z: float) -> float:
+        """
+        Linearly interpolate between bottom_value and top_value at height z,
+        where z is measured from base (0) to self.height.
+        """
+        t = z / self.height
+        return bottom_value - (bottom_value - top_value) * t
 
-            
+    def _outer_dims_at_z(self, z: float, top_len: float, top_wid: float):
+        L = self._lerp(self.base_length, top_len, z)
+        W = self._lerp(self.base_width,  top_wid, z)
+        return L, W
+
+    def _inner_dims_at_z(self, z: float, top_len: float, top_wid: float):
+        L, W = self._outer_dims_at_z(z, top_len, top_wid)
+        return L - 2 * self.wall_thickness, W - 2 * self.wall_thickness
+
+
+
+
 

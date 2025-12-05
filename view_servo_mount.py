@@ -2,8 +2,8 @@
 from robocad.parts.servo import *
 
 def main():
-    mount = ServoFrustumMount()
-    out_path = 'servo_frustum_mount.step'
+    mount = ServoMountPlate()
+    out_path = 'servo_mount_plate.step'
     mount.export_step(out_path)
 
 if __name__ == "__main__":
