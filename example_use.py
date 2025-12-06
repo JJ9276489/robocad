@@ -1,11 +1,12 @@
-from robocad.parts.servo import ServoMount, SG90_SPEC
+from robocad.core.parameters import SG90_SPEC
+from robocad.parts.servo import ServoMountPlate
 
-mount = ServoMount(
+mount = ServoMountPlate(
     spec=SG90_SPEC,
     thickness=3.0,
     clearance=0.3,
-    hole_diameter=2.2,
-    flange_extra=6.0,
+    margin_y=3.0,
+    margin_x=5.0,
 )
 
 mount.export_stl("sg90_mount.stl")

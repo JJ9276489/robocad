@@ -1,0 +1,18 @@
+add clearance to ultrasonic mount
+- tie ultrasonic flange hole spacing to servo spec?
+- add safety asserts for flange hole spacing
+
+add spur gear component
+
+code a way of combining two seperate components in any way you want
+
+finish geometry.py
+
+use geometry.py in creation of servo frustum mount
+
+make countersink for mounting screws in servo frustum mount
+
+refactor servo frustum mount to make base scale parametrically
+- ex.   # derive actual base size
+        base_len = max(self.base_length_min, top_len + 2 * self.base_margin_x)
+        base_wid = max(self.base_width_min, top_wid + 2 * self.base_margin_y)

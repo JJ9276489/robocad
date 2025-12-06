@@ -1,38 +1,7 @@
 from dataclasses import dataclass, field
 from build123d import *
 from robocad.core.part import Component
-
-
-@dataclass
-class ServoSpec:
-    """
-    Physical dimensions of a servo body.
-    All units in millimeters.
-    """
-    body_width: float        # Y
-    body_length: float       # X
-    body_height: float       # Z
-
-    flange_thickness: float  # thickness of the mounting ears
-    flange_overhang: float   # how far the flanges extend past the body (in +X / -X)
-
-    screw_spacing_x: float   # distance between the two mounting screw centers (along X)
-    screw_diameter: float    # nominal screw diameter
-
-
-# Approximate SG90 defaults (treat as placeholders; refine with calipers later)
-SG90_SPEC = ServoSpec(
-    body_width=12.2,
-    body_length=23.5,
-    body_height=22.5,
-
-    flange_thickness=2.0,
-    flange_overhang=2.0,
-
-    screw_spacing_x=27.0,
-    screw_diameter=2.0,
-)
-
+from robocad.core.parameters import ServoSpec, SG90_SPEC
 # ---- PARTS ----
 
 @dataclass
@@ -52,7 +21,7 @@ class ServoMountPlate(Component):
     thickness: float = 3.0      # plate thickness
     clearance: float = 0.3      # extra slack around the body so it actually fits
     margin_y: float = 3.0       # extra area beyond body in Y (width)
-    margin_x: float = 5.0       # extra area beyond body in X (length)
+    margin_x: float = 4.0       # extra area beyond body in X (length)
 
     def build(self):
         s = self.spec  # alias
@@ -187,9 +156,8 @@ class ServoFrustumMount(Component):
 
             # 7) Wire slot cut
             # Placed on the front face (I want to cut a slot offset from the bottom by bottom thickness on one side)
-            slot_clearance = 2.0 # if this subtractive prism touches the bottom floor it causes rendering glitches
             with BuildSketch(Plane.YZ):
-                with Locations((0, (self.wire_slot_height / 2) + self.bottom_thickness + slot_clearance)):
+                with Locations((0, (self.wire_slot_height / 2) + self.bottom_thickness)):
                     Rectangle(self.wire_slot_width, self.wire_slot_height)
             extrude(amount=self.base_length, mode=Mode.SUBTRACT)
             
