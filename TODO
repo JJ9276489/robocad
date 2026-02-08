@@ -1,18 +1,23 @@
-add clearance to ultrasonic mount
-- tie ultrasonic flange hole spacing to servo spec?
-- add safety asserts for flange hole spacing
+# robocad TODO
 
-add spur gear component
+## ✅ Completed
+- CI/CD with GitHub Actions (.github/workflows/ci.yml)
+- Comprehensive README.md
+- pytest test suite (test_robocad.py)
+- pre-commit hooks (.pre-commit-config.yaml)
+- Pinned requirements.txt
 
-code a way of combining two seperate components in any way you want
+## In Progress
+- [ ] Code geometry.py functions
+- [ ] Add clearance to ultrasonic mount
+- [ ] Tie ultrasonic flange hole spacing to servo spec
+- [ ] Add safety asserts for flange hole spacing
 
-finish geometry.py
+## Backlog
+- [ ] Add spur gear component
+- [ ] Code way of combining two separate components
+- [ ] Finish geometry.py
+- [ ] Use geometry.py in servo frustum mount creation
+- [ ] Make countersink for mounting screws in servo frustum mount
+- [ ] Refactor servo frustum mount base scale parametrically
 
-use geometry.py in creation of servo frustum mount
-
-make countersink for mounting screws in servo frustum mount
-
-refactor servo frustum mount to make base scale parametrically
-- ex.   # derive actual base size
-        base_len = max(self.base_length_min, top_len + 2 * self.base_margin_x)
-        base_wid = max(self.base_width_min, top_wid + 2 * self.base_margin_y)
